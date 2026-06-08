@@ -1,0 +1,16 @@
+cookie:
+  expiry_days: 30
+  key: antibiogram_secret_key_2026
+  name: antibiogram_cookie
+credentials:
+  usernames:
+    bacsiclinical:
+      email: doctor@hospital.com
+      name: Bác sĩ Lâm sàng
+      password: $2b$12$HalWJH/iOM67Z7ORRFsRvu7VMX41jEKnoigd634D25qEof8VosfSC
+      role: doctor
+    duocvisinh:
+      email: admin@hospital.com
+      name: Dược lâm sàng / Vi sinh
+      password: $2b$12$0I0TU0Cr1NiaqALAQJm7UOGsDnkRcqlHiPJgOEKq3nMnzbTxphl6e
+      role: admin
