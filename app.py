@@ -150,11 +150,10 @@ def load_auxiliary_rules():
 spec_translation, ward_to_dept, intrinsic_rules, excluded_rules, organism_groups = load_auxiliary_rules()
 
 # =========================================================
-# 3. TIẾP NHẬN & XỬ LÝ DỮ LIỆU THÔ WHONET
+# 3. TIẾP NHẬN & XỬ LÝ DỮ LIỆU THÔ WHONET (CHỨC NĂNG CHIA SẺ TRỰC TIẾP)
 # =========================================================
-@st.cache_data(show_spinner="⏳ Đang nạp dữ liệu WHONET vào bộ nhớ đệm...")
+# ĐÃ BỎ @st.cache_data để đảm bảo dữ liệu cập nhật NGAY LẬP TỨC khi Admin thay đổi file
 def load_raw_data(file_source):
-    # Hàm này đảm bảo file Excel nặng cỡ nào cũng chỉ đọc 1 lần duy nhất
     df = pd.read_excel(file_source)
     df["WARD"] = df["WARD"].astype(str).str.strip()
     df["DEPARTMENT"] = df["DEPARTMENT"].astype(str).str.strip()
@@ -164,33 +163,61 @@ def load_raw_data(file_source):
     if "Full Name" in df.columns:
         df = df.drop(columns=["Full Name"])
     return df
-st.sidebar.markdown("### 📂 Tải dữ liệu WHONET")
-uploaded_file = st.sidebar.file_uploader("Chọn file dữ liệu Excel/CSV", type=['xlsx', 'xls', 'csv'])
-# ----------------------------------------
 
-if uploaded_file:
-    if user_role == "admin" and hasattr(uploaded_file, 'name'):
+st.sidebar.markdown("### 📂 Quản lý dữ liệu WHONET tập trung")
+
+file_to_load = None
+
+# CHẾ ĐỘ 1: TÀI KHOẢN ADMIN (Có quyền cập nhật, ghi đè và đồng bộ dữ liệu mới)
+if user_role == "admin":
+    uploaded_file = st.sidebar.file_uploader("Admin: Tải file Excel mới để cập nhật hệ thống", type=['xlsx', 'xls', 'csv'])
+    
+    if uploaded_file:
+        file_to_load = uploaded_file
         try:
-            with open("data_cache.xlsx", "wb") as f: f.write(uploaded_file.getbuffer())
-        except: pass
+            # Ghi đè trực tiếp vào file data_cache.xlsx trên server để đồng bộ cho toàn bộ hệ thống
+            with open("data_cache.xlsx", "wb") as f: 
+                f.write(uploaded_file.getbuffer())
+            st.sidebar.success("✅ Đã cập nhật và đồng bộ dữ liệu mới thành công!")
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Lỗi lưu file chia sẻ: {e}")
+    else:
+        # Nếu Admin không tải file mới, tự động đọc dữ liệu dùng chung mới nhất đang có trên hệ thống
+        if os.path.exists("data_cache.xlsx"):
+            file_to_load = "data_cache.xlsx"
+            st.sidebar.info("📂 Hệ thống đang hiển thị dữ liệu chung mới nhất.")
+        else:
+            st.warning("⚠️ Chưa có dữ liệu trên hệ thống. Vui lòng tải file Excel lên để kích hoạt.")
+            st.stop()
 
-    # Gọi hàm đã được cache
-    raw = load_raw_data(uploaded_file)
-    raw["WARD"] = raw["WARD"].astype(str).str.strip()
-    raw["DEPARTMENT"] = raw["DEPARTMENT"].astype(str).str.strip()
-    raw["SPEC_TYPE"] = raw["SPEC_TYPE"].astype(str).str.strip().str.lower()
-    raw["PID"] = raw["PID"].astype(str).str.strip()
-    raw["Organism"] = raw["Organism"].astype(str).str.strip()
+# CHẾ ĐỘ 2: TÀI KHOẢN BÁC SĨ (Tự động thừa hưởng và xem dữ liệu do Admin cung cấp)
+else:
+    st.sidebar.markdown("🔒 *Quyền Bác sĩ: Đang kết nối kho dữ liệu tập trung từ khoa Vi sinh / Dược lâm sàng.*")
+    if os.path.exists("data_cache.xlsx"):
+        file_to_load = "data_cache.xlsx"
+        st.sidebar.success("📊 Đã liên kết trực tuyến với kho dữ liệu chung.")
+    else:
+        st.warning("⚠️ Khoa Vi sinh chưa cập nhật file dữ liệu lên hệ thống. Vui lòng quay lại sau.")
+        st.stop()
 
-    if "Full Name" in raw.columns: raw = raw.drop(columns=["Full Name"])
-    if not ward_to_dept and not raw.empty:
-        ward_to_dept = raw.groupby("WARD")["DEPARTMENT"].apply(lambda x: " / ".join(filter(None, x.unique()))).to_dict()
+# Đọc dữ liệu thực tế ra để tính toán kháng sinh đồ
+raw = load_raw_data(file_to_load)
+raw["WARD"] = raw["WARD"].astype(str).str.strip()
+raw["DEPARTMENT"] = raw["DEPARTMENT"].astype(str).str.strip()
+raw["SPEC_TYPE"] = raw["SPEC_TYPE"].astype(str).str.strip().str.lower()
+raw["PID"] = raw["PID"].astype(str).str.strip()
+raw["Organism"] = raw["Organism"].astype(str).str.strip()
 
-    if excluded_rules:
-        for org, ab in excluded_rules:
-            mask = (raw["Organism"].str.lower() == org) & (raw["Antibiotics"].astype(str).str.strip().str.lower() == ab)
-            raw = raw.loc[~mask]
+if "Full Name" in raw.columns: 
+    raw = raw.drop(columns=["Full Name"])
+    
+if not ward_to_dept and not raw.empty:
+    ward_to_dept = raw.groupby("WARD")["DEPARTMENT"].apply(lambda x: " / ".join(filter(None, x.unique()))).to_dict()
 
+if excluded_rules:
+    for org, ab in excluded_rules:
+        mask = (raw["Organism"].str.lower() == org) & (raw["Antibiotics"].astype(str).str.strip().str.lower() == ab)
+        raw = raw.loc[~mask]
     # =========================================================
     # 4. BỘ LỌC ĐỘNG TRÊN GIAO DIỆN INTERFACE
     # =========================================================
