@@ -30,8 +30,8 @@ def initialize_auth_config():
     default_config = {
         "credentials": {
             "usernames": {
-                "bacsiclinical": {"email": "doctor@hospital.com", "name": "Bác sĩ Lâm sàng", "password": "bacsivien", "role": "doctor"},
-                "duocvisinh": {"email": "admin@hospital.com", "name": "Dược lâm sàng / Vi sinh", "password": "bacsivien", "role": "admin"}
+                "bacsi": {"email": "doctor@hospital.com", "name": "Bác sĩ Lâm sàng", "password": "123", "role": "doctor"},
+                "visinh": {"email": "admin@hospital.com", "name": "Dược lâm sàng / Vi sinh", "password": "210299", "role": "admin"}
             }
         },
         "cookie": {"expiry_days": 30, "key": "antibiogram_secret_key_2026", "name": "antibiogram_cookie"}
@@ -87,7 +87,7 @@ if st.session_state["authentication_status"] == False:
     st.error('Tài khoản hoặc mật khẩu không đúng!')
     st.stop()
 elif st.session_state["authentication_status"] is None:
-    st.warning('Vui lòng đăng nhập hệ thống để tiếp tục. (Tài khoản: duocvisinh / Mật khẩu: bacsivien)')
+    st.warning('Vui lòng đăng nhập hệ thống để tiếp tục.')
     st.stop()
 
 username = st.session_state["username"]
@@ -198,14 +198,25 @@ st.sidebar.markdown("### 📂 Tải dữ liệu WHONET")
 uploaded_file = st.sidebar.file_uploader("Chọn file dữ liệu Excel/CSV", type=['xlsx', 'xls', 'csv'])
 # ----------------------------------------
 
-if uploaded_file:
-    if user_role == "admin" and hasattr(uploaded_file, 'name'):
-        try:
-            with open("data_cache.xlsx", "wb") as f: f.write(uploaded_file.getbuffer())
-        except: pass
+# Xác định nguồn dữ liệu để đọc
+file_to_read = None
 
-    # Gọi hàm đã được cache
-    raw = load_raw_data(uploaded_file)
+if uploaded_file:
+    file_to_read = uploaded_file
+    # Nếu là Admin tải lên thì lưu lại một bản vào máy chủ để dùng chung
+    if user_role == "admin":
+        try:
+            with open("data_cache.xlsx", "wb") as f: 
+                f.write(uploaded_file.getbuffer())
+        except: pass
+elif os.path.exists("data_cache.xlsx"):
+    # Nếu chưa ai tải file lên, hệ thống tự động lấy file của Admin ra hiển thị
+    file_to_read = "data_cache.xlsx"
+    st.sidebar.success("✅ Đang hiển thị dữ liệu dùng chung do Admin cập nhật.")
+
+# Chạy phân tích dựa trên nguồn dữ liệu đã chốt
+if file_to_read:
+    raw = load_raw_data(file_to_read)
     raw["WARD"] = raw["WARD"].astype(str).str.strip()
     raw["DEPARTMENT"] = raw["DEPARTMENT"].astype(str).str.strip()
     raw["SPEC_TYPE"] = raw["SPEC_TYPE"].astype(str).str.strip().str.lower()
