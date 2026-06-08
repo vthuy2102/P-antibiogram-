@@ -31,7 +31,7 @@ def initialize_auth_config():
         "credentials": {
             "usernames": {
                 "bacsi": {"email": "doctor@hospital.com", "name": "Bác sĩ Lâm sàng", "password": "123", "role": "doctor"},
-                "visinh": {"email": "admin@hospital.com", "name": "Dược lâm sàng / Vi sinh", "password": "210299", "role": "admin"}
+                "visinh": {"email": "admin@hospital.com", "name": "Vi sinh", "password": "210299", "role": "admin"}
             }
         },
         "cookie": {"expiry_days": 30, "key": "antibiogram_secret_key_2026", "name": "antibiogram_cookie"}
