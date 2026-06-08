@@ -21,63 +21,66 @@ warnings.filterwarnings("ignore", category=UserWarning)
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
 # =========================================================
-# 1. CẤU HÌNH BẢO MẬT & PHÂN QUYỀN ĐĂNG NHẬP (CẬP NHẬT MỚI)
+# 1. CẤU HÌNH BẢO MẬT & PHÂN QUYỀN ĐĂNG NHẬP (TỰ VIẾT FORM - CHẮC CHẮN ĐƯỢC)
 # =========================================================
 st.set_page_config(layout="wide", page_title="WHONET Antibiogram System", page_icon="🛡️")
 
-# Cấu hình tài khoản trực tiếp trong code, mật khẩu đã được mã hóa Bcrypt
-default_config = {
-    "credentials": {
-        "usernames": {
-            "bacsi": {
-                "email": "doctor@hospital.com",
-                "name": "Bác sĩ Lâm sàng",
-                "password": "$2b$12$EbyR8vG/bkyH9Xn858E5p.f.oA2D4iN2UaMOnHwFq/81w3nBbeXTC",  # Mật khẩu gốc: 123
-                "role": "doctor"
-            },
-            "visinh": {
-                "email": "admin@hospital.com",
-                "name": "Vi sinh",
-                "password": "$2b$12$K1rS23fscBq2vWvH72d.Gey76h65fJ7LpXh71wFwH1q/6f8f5e3bC",  # Mật khẩu gốc: 210299
-                "role": "admin"
-            }
-        }
-    },
-    "cookie": {"expiry_days": 30, "key": "antibiogram_secret_key_2026", "name": "antibiogram_cookie"}
+# Cấu hình tài khoản cố định trực tiếp bằng tài khoản thuần (Không cần mã hóa phức tạp)
+USER_CREDENTIALS = {
+    "admin": {"password": "210299", "name": "Dược lâm sàng / Vi sinh (Admin)", "role": "admin"},
+    "bacsi": {"password": "123", "name": "Bác sĩ Lâm sàng", "role": "doctor"}
 }
 
-# Khởi tạo Authenticator xử lý cả 2 phiên bản cũ và mới của thư viện
-try:
-    authenticator = stauth.Authenticate(
-        default_config['credentials'],
-        default_config['cookie']['name'],
-        default_config['cookie']['key'],
-        default_config['cookie']['expiry_days']
-    )
-except Exception:
-    authenticator = stauth.Authenticate(default_config)
+# Khởi tạo trạng thái đăng nhập ban đầu trong bộ nhớ hệ thống
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "username" not in st.session_state:
+    st.session_state["username"] = ""
+if "name" not in st.session_state:
+    st.session_state["name"] = ""
+if "user_role" not in st.session_state:
+    st.session_state["user_role"] = "doctor"
 
-# Hiển thị form đăng nhập
-authenticator.login(location='main')
+# Nếu chưa đăng nhập thành công -> Hiển thị Form đăng nhập giao diện chuẩn
+if not st.session_state["authenticated"]:
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<h2 style='text-align: center;'>🛡️ ĐĂNG NHẬP HỆ THỐNG WHONET</h2>", unsafe_allow_html=True)
+        with st.form("login_form", clear_on_submit=False):
+            input_user = st.text_input("Tài khoản đăng nhập:", placeholder="admin hoặc bacsi").strip()
+            input_pass = st.text_input("Mật khẩu:", type="password", placeholder="Nhập mật khẩu tại đây")
+            submit_btn = st.form_submit_button("Đăng nhập hệ thống", use_container_width=True)
+            
+            if submit_btn:
+                if input_user in USER_CREDENTIALS and USER_CREDENTIALS[input_user]["password"] == input_pass:
+                    st.session_state["authenticated"] = True
+                    st.session_state["username"] = input_user
+                    st.session_state["name"] = USER_CREDENTIALS[input_user]["name"]
+                    st.session_state["user_role"] = USER_CREDENTIALS[input_user]["role"]
+                    st.rerun() # Tải lại trang ngay lập tức để vào dashboard
+                else:
+                    st.error("❌ Tài khoản hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại!")
+        
+        st.info("💡 Gợi ý thử nghiệm:\n- Quyền Admin: admin / 210299\n- Quyền Bác sĩ: bacsi / 123")
+    st.stop() # Chặn không cho đọc tiếp code phía dưới nếu chưa đăng nhập
 
-if st.session_state["authentication_status"] == False:
-    st.error('Tài khoản hoặc mật khẩu không đúng!')
-    st.stop()
-elif st.session_state["authentication_status"] is None:
-    st.warning('Vui lòng đăng nhập hệ thống để tiếp tục.')
-    st.stop()
-
-# Đăng nhập thành công, lấy thông tin User đang dùng
+# ĐÃ ĐĂNG NHẬP THÀNH CÔNG -> LẤY THÔNG TIN ĐỂ CHẠY TIẾP ỨNG DỤNG
 username = st.session_state["username"]
 name = st.session_state["name"]
-user_role = default_config['credentials']['usernames'][username]['role']
+user_role = st.session_state["user_role"]
 
-authenticator.logout('Đăng xuất khỏi hệ thống', 'sidebar')
+# Hiển thị khu vực Chào mừng & Nút Đăng xuất ở Sidebar bên trái
 st.sidebar.markdown(f"### 👋 Xin chào, \n**{name}**")
 st.sidebar.markdown(f"Quyền hạn: `{user_role.upper()}`")
-st.sidebar.markdown("---")
-# =========================================================
 
+if st.sidebar.button("🚪 Đăng xuất khỏi hệ thống", use_container_width=True):
+    st.session_state["authenticated"] = False
+    st.session_state["username"] = ""
+    st.session_state["name"] = ""
+    st.session_state["user_role"] = "doctor"
+    st.rerun()
+
+st.sidebar.markdown("---")
 st.title("🛡️ Hệ thống Giám sát Dịch tễ & Kháng sinh đồ tích lũy WHONET")
 
 # =========================================================
@@ -158,44 +161,21 @@ def load_raw_data(file_source):
     df["SPEC_TYPE"] = df["SPEC_TYPE"].astype(str).str.strip().str.lower()
     df["PID"] = df["PID"].astype(str).str.strip()
     df["Organism"] = df["Organism"].astype(str).str.strip()
-    
-    # --- THÊM ĐOẠN NÀY ĐỂ CHUẨN HÓA GỘP TÊN VI KHUẨN ---
-    organism_mapping = {
-        "Staphylococcus aureus ss aureus": "Staphylococcus aureus",
-        "Staphylococcus aureus subsp. aureus": "Staphylococcus aureus",
-        "Klebsiella pneumoniae ss pneumoniae": "Klebsiella pneumoniae",
-        # (Bạn có thể phẩy và thêm các vi khuẩn khác vào đây sau này nếu cần)
-    }
-    df["Organism"] = df["Organism"].replace(organism_mapping)
-    # ----------------------------------------------------
-    
     if "Full Name" in df.columns:
         df = df.drop(columns=["Full Name"])
     return df
-# --- KHUNG TẢI FILE NẰM SÁT LỀ TRÁI ---
 st.sidebar.markdown("### 📂 Tải dữ liệu WHONET")
 uploaded_file = st.sidebar.file_uploader("Chọn file dữ liệu Excel/CSV", type=['xlsx', 'xls', 'csv'])
 # ----------------------------------------
 
-# Xác định nguồn dữ liệu để đọc
-file_to_read = None
-
 if uploaded_file:
-    file_to_read = uploaded_file
-    # Nếu là Admin tải lên thì lưu lại một bản vào máy chủ để dùng chung
-    if user_role == "admin":
+    if user_role == "admin" and hasattr(uploaded_file, 'name'):
         try:
-            with open("data_cache.xlsx", "wb") as f: 
-                f.write(uploaded_file.getbuffer())
+            with open("data_cache.xlsx", "wb") as f: f.write(uploaded_file.getbuffer())
         except: pass
-elif os.path.exists("data_cache.xlsx"):
-    # Nếu chưa ai tải file lên, hệ thống tự động lấy file của Admin ra hiển thị
-    file_to_read = "data_cache.xlsx"
-    st.sidebar.success("✅ Đang hiển thị dữ liệu dùng chung do Admin cập nhật.")
 
-# Chạy phân tích dựa trên nguồn dữ liệu đã chốt
-if file_to_read:
-    raw = load_raw_data(file_to_read)
+    # Gọi hàm đã được cache
+    raw = load_raw_data(uploaded_file)
     raw["WARD"] = raw["WARD"].astype(str).str.strip()
     raw["DEPARTMENT"] = raw["DEPARTMENT"].astype(str).str.strip()
     raw["SPEC_TYPE"] = raw["SPEC_TYPE"].astype(str).str.strip().str.lower()
@@ -616,7 +596,7 @@ if file_to_read:
         return output_buffer.getvalue()
 
     st.download_button(
-        label="📥 TẢI XUỐNG BÁO CÁO EXCEL", 
+        label="📥 TẢI XUỐNG BÁO CÁO EXCEL CAO CẤP (Đã định dạng chuyên nghiệp)", 
         data=generate_excel_report(), 
         file_name="WHONET_Antibiogram_Professional_Report.xlsx", 
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
