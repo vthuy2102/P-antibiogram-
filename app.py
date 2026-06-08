@@ -21,66 +21,43 @@ warnings.filterwarnings("ignore", category=UserWarning)
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
 # =========================================================
-# 1. CẤU HÌNH BẢO MẬT & PHÂN QUYỀN ĐĂNG NHẬP
+# 1. CẤU HÌNH BẢO MẬT & PHÂN QUYỀN ĐĂNG NHẬP (CẬP NHẬT MỚI)
 # =========================================================
 st.set_page_config(layout="wide", page_title="WHONET Antibiogram System", page_icon="🛡️")
 
-@st.cache_data(ttl=3600)
-def initialize_auth_config():
-    default_config = {
-        "credentials": {
-            "usernames": {
-                "bacsi": {"email": "doctor@hospital.com", "name": "Bác sĩ Lâm sàng", "password": "123", "role": "doctor"},
-                "visinh": {"email": "admin@hospital.com", "name": "Vi sinh", "password": "210299", "role": "admin"}
+# Cấu hình tài khoản trực tiếp trong code, mật khẩu đã được mã hóa Bcrypt
+default_config = {
+    "credentials": {
+        "usernames": {
+            "bacsi": {
+                "email": "doctor@hospital.com",
+                "name": "Bác sĩ Lâm sàng",
+                "password": "$2b$12$EbyR8vG/bkyH9Xn858E5p.f.oA2D4iN2UaMOnHwFq/81w3nBbeXTC",  # Mật khẩu gốc: 123
+                "role": "doctor"
+            },
+            "visinh": {
+                "email": "admin@hospital.com",
+                "name": "Vi sinh",
+                "password": "$2b$12$K1rS23fscBq2vWvH72d.Gey76h65fJ7LpXh71wFwH1q/6f8f5e3bC",  # Mật khẩu gốc: 210299
+                "role": "admin"
             }
-        },
-        "cookie": {"expiry_days": 30, "key": "antibiogram_secret_key_2026", "name": "antibiogram_cookie"}
-    }
+        }
+    },
+    "cookie": {"expiry_days": 30, "key": "antibiogram_secret_key_2026", "name": "antibiogram_cookie"}
+}
 
-    config = None
-    if os.path.exists('config.yaml'):
-        try:
-            with open('config.yaml', 'r', encoding='utf-8') as file:
-                config = yaml.load(file, Loader=SafeLoader)
-        except Exception: config = None
-
-    if config is None or not isinstance(config, dict) or 'credentials' not in config:
-        try:
-            with open('config.yaml', 'w', encoding='utf-8') as f:
-                yaml.dump(default_config, f, default_flow_style=False, allow_unicode=True)
-            config = default_config
-        except Exception as e:
-            st.error(f"❌ Lỗi khởi tạo file bảo mật: {e}")
-            st.stop()
-        
-    try:
-        modified = False
-        for username, user_info in config['credentials']['usernames'].items():
-            pwd = user_info['password']
-            if not pwd.startswith("$2b$"): 
-                try: hashed_password = stauth.Hasher([pwd]).generate()[0]
-                except AttributeError: hashed_password = stauth.Hasher([pwd]).hash(pwd)
-                config['credentials']['usernames'][username]['password'] = hashed_password
-                modified = True
-                
-        if modified:
-            with open('config.yaml', 'w', encoding='utf-8') as file:
-                yaml.dump(config, file, default_flow_style=False, allow_unicode=True)
-        return config
-    except Exception as e:
-        st.error(f"❌ Lỗi mã hóa mật khẩu: {e}")
-        st.stop()
-
-auth_config = initialize_auth_config()
-
+# Khởi tạo Authenticator xử lý cả 2 phiên bản cũ và mới của thư viện
 try:
     authenticator = stauth.Authenticate(
-        auth_config['credentials'], auth_config['cookie']['name'],
-        auth_config['cookie']['key'], auth_config['cookie']['expiry_days']
+        default_config['credentials'],
+        default_config['cookie']['name'],
+        default_config['cookie']['key'],
+        default_config['cookie']['expiry_days']
     )
-except TypeError:
-    authenticator = stauth.Authenticate(auth_config)
+except Exception:
+    authenticator = stauth.Authenticate(default_config)
 
+# Hiển thị form đăng nhập
 authenticator.login(location='main')
 
 if st.session_state["authentication_status"] == False:
@@ -90,14 +67,16 @@ elif st.session_state["authentication_status"] is None:
     st.warning('Vui lòng đăng nhập hệ thống để tiếp tục.')
     st.stop()
 
+# Đăng nhập thành công, lấy thông tin User đang dùng
 username = st.session_state["username"]
 name = st.session_state["name"]
-user_role = auth_config['credentials']['usernames'][username]['role']
+user_role = default_config['credentials']['usernames'][username]['role']
 
 authenticator.logout('Đăng xuất khỏi hệ thống', 'sidebar')
 st.sidebar.markdown(f"### 👋 Xin chào, \n**{name}**")
 st.sidebar.markdown(f"Quyền hạn: `{user_role.upper()}`")
 st.sidebar.markdown("---")
+# =========================================================
 
 st.title("🛡️ Hệ thống Giám sát Dịch tễ & Kháng sinh đồ tích lũy WHONET")
 
@@ -637,7 +616,7 @@ if file_to_read:
         return output_buffer.getvalue()
 
     st.download_button(
-        label="📥 TẢI XUỐNG BÁO CÁO EXCEL CAO CẤP (Đã định dạng chuyên nghiệp)", 
+        label="📥 TẢI XUỐNG BÁO CÁO EXCEL", 
         data=generate_excel_report(), 
         file_name="WHONET_Antibiogram_Professional_Report.xlsx", 
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
