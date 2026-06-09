@@ -12,6 +12,8 @@ import yaml
 from yaml.loader import SafeLoader
 import os
 import warnings
+import json
+import sqlite3
 
 # --- Ẩn các cảnh báo hệ thống ---
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -21,15 +23,18 @@ warnings.filterwarnings("ignore", category=UserWarning)
 plt.rcParams['font.family'] = 'DejaVu Sans'
 
 # =========================================================
-# 1. CẤU HÌNH BẢO MẬT & PHÂN QUYỀN ĐĂNG NHẬP (TỰ VIẾT FORM - CHẮC CHẮN ĐƯỢC)
+# 1. CẤU HÌNH BẢO MẬT & PHÂN QUYỀN ĐĂNG NHẬP (ĐỌC FILE JSON NGOÀI)
 # =========================================================
 st.set_page_config(layout="wide", page_title="WHONET Antibiogram System", page_icon="🛡️")
 
-# Cấu hình tài khoản cố định trực tiếp bằng tài khoản thuần (Không cần mã hóa phức tạp)
-USER_CREDENTIALS = {
-    "admin": {"password": "210299", "name": "Dược lâm sàng / Vi sinh (Admin)", "role": "admin"},
-    "bacsi": {"password": "123", "name": "Bác sĩ Lâm sàng", "role": "doctor"}
-}
+# Đọc tài khoản bảo mật từ file credentials.json thông thường
+try:
+    with open("credentials.json", "r", encoding="utf-8") as f:
+        USER_CREDENTIALS = json.load(f)
+except Exception as e:
+    st.error(f"🚨 LỖI NGHIÊM TRỌNG: Không tìm thấy hoặc lỗi cấu trúc file cấu hình tài khoản (credentials.json)! Chi tiết: {e}")
+    st.sidebar.warning("Vui lòng kiểm tra lại file credentials.json ở cùng thư mục với app.py.")
+    st.stop()
 
 # Khởi tạo trạng thái đăng nhập ban đầu trong bộ nhớ hệ thống
 if "authenticated" not in st.session_state:
@@ -41,7 +46,7 @@ if "name" not in st.session_state:
 if "user_role" not in st.session_state:
     st.session_state["user_role"] = "doctor"
 
-# Nếu chưa đăng nhập thành công -> Hiển thị Form đăng nhập giao diện chuẩn
+# Nếu chưa đăng nhập -> Hiển thị Form đăng nhập
 if not st.session_state["authenticated"]:
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -52,17 +57,16 @@ if not st.session_state["authenticated"]:
             submit_btn = st.form_submit_button("Đăng nhập hệ thống", use_container_width=True)
             
             if submit_btn:
-                if input_user in USER_CREDENTIALS and USER_CREDENTIALS[input_user]["password"] == input_pass:
+                # Kiểm tra tài khoản và ép kiểu mật khẩu về string để so sánh chính xác
+                if input_user in USER_CREDENTIALS and str(USER_CREDENTIALS[input_user]["password"]) == str(input_pass):
                     st.session_state["authenticated"] = True
                     st.session_state["username"] = input_user
                     st.session_state["name"] = USER_CREDENTIALS[input_user]["name"]
                     st.session_state["user_role"] = USER_CREDENTIALS[input_user]["role"]
-                    st.rerun() # Tải lại trang ngay lập tức để vào dashboard
+                    st.rerun() 
                 else:
                     st.error("❌ Tài khoản hoặc mật khẩu không chính xác. Vui lòng kiểm tra lại!")
-        
-        st.info("💡 Gợi ý thử nghiệm:\n- Quyền Admin: admin / 210299\n- Quyền Bác sĩ: bacsi / 123")
-    st.stop() # Chặn không cho đọc tiếp code phía dưới nếu chưa đăng nhập
+    st.stop()
 
 # ĐÃ ĐĂNG NHẬP THÀNH CÔNG -> LẤY THÔNG TIN ĐỂ CHẠY TIẾP ỨNG DỤNG
 username = st.session_state["username"]
@@ -84,7 +88,7 @@ st.sidebar.markdown("---")
 st.title("🛡️ Hệ thống Giám sát Dịch tễ & Kháng sinh đồ tích lũy WHONET")
 
 # =========================================================
-# 2. DANH MỤC QUY TẮC PHỤ TRỢ & TỪ ĐIỂN THÔNG MINH
+# 2. DANH MỤC QUY TẮC PHỤ TRỢ (BẮT LỖI RULES CHI TIẾT)
 # =========================================================
 # TỪ ĐIỂN ÁNH XẠ: Giúp nối mã 3 chữ WHONET với Tên đầy đủ trong file rules của bạn
 WHONET_ABX_MAP = {
@@ -114,94 +118,149 @@ def clean_sheet_name(name):
 def load_auxiliary_rules():
     spec_translation = {"bl": "Máu", "ur": "Nước tiểu", "sp": "Đờm", "as": "Mủ", "ab": "Dịch màng bụng"}
     ward_to_dept, intrinsic_rules, excluded_rules, organism_groups = {}, [], [], {}
-
-    if os.path.exists("specimen_rules.xlsx"):
-        try:
-            spec_df = pd.read_excel("specimen_rules.xlsx")
-            spec_translation = dict(zip(spec_df["SPEC_TYPE"].astype(str).str.strip().str.lower(), spec_df["Specimen_Name"].astype(str).str.strip()))
-        except: pass
-
-    if os.path.exists("ward_rules.xlsx"):
-        try:
-            ward_df = pd.read_excel("ward_rules.xlsx")
-            ward_to_dept = dict(zip(ward_df["WARD"].astype(str).str.strip(), ward_df["Ward_Name"].astype(str).str.strip()))
-        except: pass
-
-    if os.path.exists("intrinsic_rules.xlsx"):
-        try:
-            ir_df = pd.read_excel("intrinsic_rules.xlsx")
-            for _, r in ir_df.iterrows(): intrinsic_rules.append((str(r["Organism"]).strip().lower(), str(r["Antibiotic"]).strip().lower()))
-        except: pass
-
-    if os.path.exists("clsi_excluded.xlsx"):
-        try:
-            ex_df = pd.read_excel("clsi_excluded.xlsx")
-            for _, r in ex_df.iterrows(): excluded_rules.append((str(r["Organism"]).strip().lower(), str(r["Antibiotic"]).strip().lower()))
-        except: pass
-
-    if os.path.exists("organism_group.xlsx"):
-        try:
-            group_file = pd.read_excel("organism_group.xlsx")
-            organism_groups = dict(zip(group_file["Organism"].astype(str).str.strip(), group_file["Gram"].fillna("Không xác định")))
-        except: pass
-
-    return spec_translation, ward_to_dept, intrinsic_rules, excluded_rules, organism_groups
-
-spec_translation, ward_to_dept, intrinsic_rules, excluded_rules, organism_groups = load_auxiliary_rules()
-
-# =========================================================
-# 3. TIẾP NHẬN & XỬ LÝ DỮ LIỆU THÔ WHONET (CHỨC NĂNG CHIA SẺ TRỰC TIẾP)
-# =========================================================
-# ĐÃ BỎ @st.cache_data để đảm bảo dữ liệu cập nhật NGAY LẬP TỨC khi Admin thay đổi file
-def load_raw_data(file_source):
-    df = pd.read_excel(file_source)
-    df["WARD"] = df["WARD"].astype(str).str.strip()
-    df["DEPARTMENT"] = df["DEPARTMENT"].astype(str).str.strip()
-    df["SPEC_TYPE"] = df["SPEC_TYPE"].astype(str).str.strip().str.lower()
-    df["PID"] = df["PID"].astype(str).str.strip()
-    df["Organism"] = df["Organism"].astype(str).str.strip()
-    if "Full Name" in df.columns:
-        df = df.drop(columns=["Full Name"])
-    return df
-
-st.sidebar.markdown("### 📂 Quản lý dữ liệu WHONET tập trung")
-
-file_to_load = None
-
-# CHẾ ĐỘ 1: TÀI KHOẢN ADMIN (Có quyền cập nhật, ghi đè và đồng bộ dữ liệu mới)
-if user_role == "admin":
-    uploaded_file = st.sidebar.file_uploader("Admin: Tải file Excel mới để cập nhật hệ thống", type=['xlsx', 'xls', 'csv'])
     
-    if uploaded_file:
-        file_to_load = uploaded_file
-        try:
-            # Ghi đè trực tiếp vào file data_cache.xlsx trên server để đồng bộ cho toàn bộ hệ thống
-            with open("data_cache.xlsx", "wb") as f: 
-                f.write(uploaded_file.getbuffer())
-            st.sidebar.success("✅ Đã cập nhật và đồng bộ dữ liệu mới thành công!")
-        except Exception as e:
-            st.sidebar.error(f"⚠️ Lỗi lưu file chia sẻ: {e}")
-    else:
-        # Nếu Admin không tải file mới, tự động đọc dữ liệu dùng chung mới nhất đang có trên hệ thống
-        if os.path.exists("data_cache.xlsx"):
-            file_to_load = "data_cache.xlsx"
-            st.sidebar.info("📂 Hệ thống đang hiển thị dữ liệu chung mới nhất.")
-        else:
-            st.warning("⚠️ Chưa có dữ liệu trên hệ thống. Vui lòng tải file Excel lên để kích hoạt.")
-            st.stop()
+    log_messages = []
+    config_files = {
+        "specimen_rules.xlsx": "Quy đổi bệnh phẩm",
+        "ward_rules.xlsx": "Quy đổi khoa phòng",
+        "intrinsic_rules.xlsx": "Kháng tự nhiên (Intrinsic)",
+        "clsi_excluded.xlsx": "Loại trừ CLSI",
+        "organism_group.xlsx": "Nhóm Gram vi khuẩn"
+    }
 
-# CHẾ ĐỘ 2: TÀI KHOẢN BÁC SĨ (Tự động thừa hưởng và xem dữ liệu do Admin cung cấp)
-else:
-    st.sidebar.markdown("🔒 *Quyền Bác sĩ: Đang kết nối kho dữ liệu tập trung từ khoa Vi sinh / Dược lâm sàng.*")
-    if os.path.exists("data_cache.xlsx"):
-        file_to_load = "data_cache.xlsx"
-        st.sidebar.success("📊 Đã liên kết trực tuyến với kho dữ liệu chung.")
+    for file_name, description in config_files.items():
+        if os.path.exists(file_name):
+            try:
+                df = pd.read_excel(file_name)
+                if file_name == "specimen_rules.xlsx":
+                    spec_translation.update(dict(zip(df["SPEC_TYPE"].astype(str).str.strip().str.lower(), df["Specimen_Name"].astype(str).str.strip())))
+                elif file_name == "ward_rules.xlsx":
+                    ward_to_dept.update(dict(zip(df["WARD"].astype(str).str.strip(), df["Ward_Name"].astype(str).str.strip())))
+                elif file_name == "intrinsic_rules.xlsx":
+                    for _, r in df.iterrows(): intrinsic_rules.append((str(r["Organism"]).strip().lower(), str(r["Antibiotic"]).strip().lower()))
+                elif file_name == "clsi_excluded.xlsx":
+                    for _, r in df.iterrows(): excluded_rules.append((str(r["Organism"]).strip().lower(), str(r["Antibiotic"]).strip().lower()))
+                elif file_name == "organism_group.xlsx":
+                    organism_groups.update(dict(zip(df["Organism"].astype(str).str.strip(), df["Gram"].fillna("Không xác định"))))
+            except Exception as e:
+                log_messages.append(("error", f"🚨 Lỗi cấu trúc file '{description}' ({file_name}): {e}"))
+        else:
+            log_messages.append(("warning", f"💡 Không thấy file: '{file_name}'. Dùng mặc định."))
+
+    return spec_translation, ward_to_dept, intrinsic_rules, excluded_rules, organism_groups, log_messages
+
+spec_translation, ward_to_dept, intrinsic_rules, excluded_rules, organism_groups, config_logs = load_auxiliary_rules()
+
+# Hiển thị log của các file rules lên thanh Sidebar
+if config_logs:
+    for msg_type, msg_text in config_logs:
+        if msg_type == "error": st.sidebar.error(msg_text)
+        else: st.sidebar.warning(msg_text)
+
+
+# =========================================================
+# 3. TIẾP NHẬN & QUẢN LÝ DỮ LIỆU TẬP TRUNG BẰNG SQLITE
+# =========================================================
+DB_FILE = "whonet_system.db"
+
+# Hàm khởi tạo cấu trúc bảng Database ngầm
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS system_status (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+init_db()
+
+st.sidebar.markdown("### 📂 Kho dữ liệu WHONET (SQLite)")
+
+# CHẾ ĐỘ 1: TÀI KHOẢN ADMIN (Tải file Excel lên và nạp thẳng vào Database)
+if user_role == "admin":
+    # Thêm thuộc tính accept_multiple_files=True
+    uploaded_files = st.sidebar.file_uploader("Admin: Tải 1 hoặc NHIỀU file Excel cùng lúc", type=['xlsx', 'xls', 'csv'], accept_multiple_files=True)
+    
+    if uploaded_files:
+        try:
+            with st.spinner("🔄 Đang gộp và nạp dữ liệu vào Database SQLite..."):
+                # Tạo một danh sách để chứa dữ liệu của nhiều file
+                df_list = []
+                for file in uploaded_files:
+                    df_list.append(pd.read_excel(file))
+                
+                # Tự động nối (gộp) tất cả các file Excel lại thành 1 bảng duy nhất
+                df_upload = pd.concat(df_list, ignore_index=True)
+                
+                # Chuẩn hóa dữ liệu trước khi lưu vào DB
+                df_upload["WARD"] = df_upload["WARD"].astype(str).str.strip()
+                df_upload["DEPARTMENT"] = df_upload["DEPARTMENT"].astype(str).str.strip()
+                df_upload["SPEC_TYPE"] = df_upload["SPEC_TYPE"].astype(str).str.strip().str.lower()
+                df_upload["PID"] = df_upload["PID"].astype(str).str.strip()
+                df_upload["Organism"] = df_upload["Organism"].astype(str).str.strip()
+                if "Full Name" in df_upload.columns:
+                    df_upload = df_upload.drop(columns=["Full Name"])
+                
+                # Lưu đè toàn bộ dữ liệu vào bảng 'raw_data' trong SQLite
+                conn = sqlite3.connect(DB_FILE)
+                df_upload.to_sql("raw_data", conn, if_exists="replace", index=False)
+                
+                # Đánh dấu trạng thái đã có dữ liệu
+                cursor = conn.cursor()
+                cursor.execute("INSERT OR REPLACE INTO system_status (key, value) VALUES ('has_data', 'true')")
+                conn.commit()
+                conn.close()
+                
+            st.sidebar.success("✅ Đã cập nhật và đồng bộ Database thành công!")
+        
+        except Exception as e:
+            st.sidebar.error(f"⚠️ Lỗi xử lý nạp Database: {e}")
+
+# Kiểm tra xem Database đã có dữ liệu được nạp từ trước chưa
+conn = sqlite3.connect(DB_FILE)
+cursor = conn.cursor()
+cursor.execute("SELECT value FROM system_status WHERE key='has_data'")
+status_row = cursor.fetchone()
+conn.close()
+
+if status_row and status_row[0] == 'true':
+    # Đọc ngược dữ liệu từ SQLite ra biến 'raw' để chạy thuật toán
+    conn = sqlite3.connect(DB_FILE)
+    raw = pd.read_sql("SELECT * FROM raw_data", conn)
+    conn.close()
+    
+    # Ép kiểu dữ liệu sau khi đọc từ DB đảm bảo không lỗi thuật toán
+    raw["WARD"] = raw["WARD"].astype(str).str.strip()
+    raw["DEPARTMENT"] = raw["DEPARTMENT"].astype(str).str.strip()
+    raw["SPEC_TYPE"] = raw["SPEC_TYPE"].astype(str).str.strip().str.lower()
+    raw["PID"] = raw["PID"].astype(str).str.strip()
+    raw["Organism"] = raw["Organism"].astype(str).str.strip()
+    
+    if user_role == "admin":
+        st.sidebar.info("📂 Đang hiển thị dữ liệu tập trung (SQLite).")
     else:
-        st.warning("⚠️ Khoa Vi sinh chưa cập nhật file dữ liệu lên hệ thống. Vui lòng quay lại sau.")
-        st.stop()
+        st.sidebar.success("📊 Đã liên kết trực tuyến với kho dữ liệu SQLite.")
+else:
+    if user_role == "admin":
+        st.warning("⚠️ Chưa có dữ liệu trong Database. Vui lòng tải file Excel lên để kích hoạt.")
+    else:
+        st.warning("⚠️ Khoa Vi sinh chưa khởi tạo Database dữ liệu. Vui lòng quay lại sau.")
+    st.stop()
 
 # Đọc dữ liệu thực tế ra để tính toán kháng sinh đồ
-raw = load_raw_data(file_to_load)
+
+# --- BẮT ĐẦU ĐOẠN THÊM MỚI: TỰ ĐỘNG NHẬN DIỆN CỘT TUỔI & GIỚI TÍNH ---
+rename_dict = {}
+for col in raw.columns:
+    col_upper = str(col).strip().upper()
+    if col_upper in ["AGE", "TUỔI", "TUOI"]: rename_dict[col] = "AGE"
+    if col_upper in ["SEX", "GIỚI TÍNH", "GIOI TINH"]: rename_dict[col] = "SEX"
+raw = raw.rename(columns=rename_dict)
+
 raw["WARD"] = raw["WARD"].astype(str).str.strip()
 raw["DEPARTMENT"] = raw["DEPARTMENT"].astype(str).str.strip()
 raw["SPEC_TYPE"] = raw["SPEC_TYPE"].astype(str).str.strip().str.lower()
@@ -273,6 +332,47 @@ if excluded_rules:
     if selected_specimens: df_filtered = df_filtered[df_filtered["SPEC_TYPE"].isin(selected_specimens)]
 
     if df_filtered.empty: st.warning("⚠️ Không tìm thấy kết quả nào phù hợp với bộ lọc."); st.stop()
+    # =======================================================
+    # BỔ SUNG: BỘ LỌC THEO NHÓM GRAM VÀ VI KHUẨN CỤ THỂ
+    # =======================================================
+    st.markdown("#### 🦠 Chọn lọc nhóm Vi khuẩn")
+    
+    # Tạo cột Gram tạm thời dựa trên từ điển để dễ phân loại
+    df_filtered["Gram_Group"] = df_filtered["Organism"].map(lambda x: organism_groups.get(x, "Không xác định"))
+    all_grams = sorted(df_filtered["Gram_Group"].dropna().unique().tolist())
+    
+    # 1. Nút Checkbox chọn nhanh nhóm Gram
+    col_gr1, col_gr2, col_gr3 = st.columns(3)
+    with col_gr1: cb_gram_am = st.checkbox("🔴 Nhóm Gram Âm", value=True)
+    with col_gr2: cb_gram_duong = st.checkbox("🔵 Nhóm Gram Dương", value=True)
+    with col_gr3: cb_gram_khac = st.checkbox("⚪ Khác/Không xác định", value=True)
+    
+    selected_grams = []
+    if cb_gram_am: selected_grams.append("Gram âm")
+    if cb_gram_duong: selected_grams.append("Gram dương")
+    if cb_gram_khac: 
+        selected_grams.extend([g for g in all_grams if g not in ["Gram âm", "Gram dương"]])
+        
+    # Áp dụng lọc Gram trước để thu hẹp danh sách vi khuẩn
+    if selected_grams:
+        df_filtered = df_filtered[df_filtered["Gram_Group"].isin(selected_grams)]
+        
+    # 2. Hộp Multi-select lọc theo tên Vi khuẩn cụ thể
+    all_orgs_after_gram = sorted(df_filtered["Organism"].dropna().unique().tolist())
+    selected_orgs = st.multiselect(
+        "Vi khuẩn lọc (Tự động cập nhật theo nhóm Gram):", 
+        options=all_orgs_after_gram, 
+        default=all_orgs_after_gram, 
+        help="Có thể xóa bớt để chỉ chọn 1-2 vi khuẩn cần nghiên cứu"
+    )
+    
+    # Áp dụng bộ lọc vi khuẩn cuối cùng
+    if selected_orgs:
+        df_filtered = df_filtered[df_filtered["Organism"].isin(selected_orgs)]
+        
+    # Xóa cột Gram_Group tạm để không làm rối các thuật toán phía dưới
+    df_filtered = df_filtered.drop(columns=["Gram_Group"], errors="ignore")
+    # =======================================================
 
     pivot = df_filtered.pivot_table(index=["PID", "SPEC_DATE", "WARD", "SPEC_TYPE", "Organism"], columns="Antibiotics", values="Interpretation", aggfunc="first").reset_index()
     pivot = pivot.sort_values("SPEC_DATE")
@@ -364,6 +464,164 @@ if excluded_rules:
             plt.close(fig_dist)
 
         st.markdown("---")
+        # =======================================================
+        # DASHBOARD DỊCH TỄ HỌC (BỆNH PHẨM, KHOA, TUỔI, GIỚI TÍNH)
+        # =======================================================
+        st.markdown("---")
+        st.markdown("### Phân bố Dịch tễ học chi tiết")
+        
+        # Ghép thêm dữ liệu Tuổi (AGE) và Giới tính (SEX)
+        demo_df = pivot.copy()
+        cols_to_get = ["PID"]
+        if "SEX" in raw.columns: cols_to_get.append("SEX")
+        if "AGE" in raw.columns: cols_to_get.append("AGE")
+        
+        if len(cols_to_get) > 1:
+            patient_info = df_filtered[cols_to_get].drop_duplicates(subset=["PID"])
+            demo_df = pd.merge(demo_df, patient_info, on="PID", how="left")
+
+        # --- ÁP DỤNG THEME KHOA HỌC CHO BIỂU ĐỒ ---
+        sns.set_theme(style="ticks", context="paper", font_scale=1.1)
+        
+        col_g1, col_g2 = st.columns(2)
+        
+        with col_g1:
+            # 1. BIỂU ĐỒ THEO BỆNH PHẨM (Stacked Bar - Khắc phục lỗi trùng màu hệ thống)
+            st.markdown("**1. Tác nhân vi sinh theo Loại bệnh phẩm**")
+            demo_df["Tên Bệnh Phẩm"] = demo_df["SPEC_TYPE"].map(lambda x: spec_translation.get(x.lower(), x.upper()))
+            top_10_orgs = demo_df["Organism"].value_counts().nlargest(10).index
+            df_spec = demo_df[demo_df["Organism"].isin(top_10_orgs)]
+            
+            if not df_spec.empty:
+                spec_org_counts = df_spec.groupby(["Organism", "Tên Bệnh Phẩm"]).size().unstack(fill_value=0)
+                
+                # Định nghĩa bảng màu học thuật cố định, mở rộng số lượng màu để không bao giờ bị trùng
+                academic_colors = [
+                    "#34495E", "#3498DB", "#2ECC71", "#E67E22", "#9B59B6", 
+                    "#1ABC9C", "#E74C3C", "#F1C40F", "#95A5A6", "#7F8C8D"
+                ]
+                # Chỉ lấy đúng số lượng màu tương ứng với số loại bệnh phẩm thực tế đang có
+                custom_palette = academic_colors[:len(spec_org_counts.columns)]
+                
+                fig1, ax1 = plt.subplots(figsize=(8, 5.5))
+                
+                # Vẽ biểu đồ với bảng màu custom riêng biệt, có viền trắng tinh tế tách giữa các đoạn xếp chồng
+                spec_org_counts.plot(
+                    kind="barh", 
+                    stacked=True, 
+                    ax=ax1, 
+                    color=custom_palette, 
+                    edgecolor="white", 
+                    linewidth=0.8
+                )
+                
+                # Tinh chỉnh hiển thị theo chuẩn Publication-ready
+                ax1.set_xlabel("Số lượng mẫu (n)", fontweight="bold", fontsize=10)
+                ax1.set_ylabel("Tác nhân vi sinh", fontweight="bold", fontsize=10)
+                
+                # Định dạng chú thích (Legend) nằm gọn gàng bên phải, không khung viền thừa
+                ax1.legend(
+                    title="Bệnh phẩm", 
+                    bbox_to_anchor=(1.02, 1), 
+                    loc='upper left', 
+                    frameon=False,
+                    fontsize=9,
+                    title_fontsize=10
+                )
+                
+                # Xóa bỏ lưới nền và đường viền bao quanh (phía trên và bên phải) để biểu đồ sạch sẽ
+                sns.despine(ax=ax1)
+                ax1.grid(axis='x', linestyle='--', alpha=0.3) # Chỉ để lại lưới dọc mờ hỗ trợ gióng số lượng
+                
+                plt.tight_layout()
+                st.pyplot(fig1)
+                plt.close(fig1)
+            else: 
+                st.info("Không đủ dữ liệu Bệnh phẩm.")
+
+            # 3. BIỂU ĐỒ THEO ĐỘ TUỔI (Histogram)
+            st.markdown("<br>**3. Phân bố mẫu theo Độ tuổi**", unsafe_allow_html=True)
+            if "AGE" in demo_df.columns:
+                def extract_age(x):
+                    try: return float(re.findall(r'\d+', str(x))[0])
+                    except: return np.nan
+                demo_df["AGE_Num"] = demo_df["AGE"].apply(extract_age)
+                demo_valid_age = demo_df.dropna(subset=["AGE_Num"])
+                
+                if not demo_valid_age.empty:
+                    fig3, ax3 = plt.subplots(figsize=(8, 4.5))
+                    sns.histplot(data=demo_valid_age, x="AGE_Num", bins=15, kde=True, color="#5F7B8A", edgecolor="white", ax=ax3)
+                    ax3.set_xlabel("Độ tuổi (Năm)", fontweight="bold")
+                    ax3.set_ylabel("Số lượng mẫu (n)", fontweight="bold")
+                    sns.despine(ax=ax3)
+                    plt.tight_layout()
+                    st.pyplot(fig3)
+                    plt.close(fig3)
+                else: st.info("Dữ liệu tuổi trống hoặc không hợp lệ.")
+            else: st.info("Dữ liệu không có cột 'AGE'.")
+
+        with col_g2:
+            # 2. BIỂU ĐỒ THEO KHOA PHÒNG (Horizontal Barplot)
+            st.markdown("**2. Phân bố mẫu theo Khoa phòng lâm sàng**")
+            demo_df["Tên Khoa"] = demo_df["WARD"].map(lambda x: ward_to_dept.get(x, x))
+            ward_counts = demo_df["Tên Khoa"].value_counts().nlargest(10)
+            if not ward_counts.empty:
+                fig2, ax2 = plt.subplots(figsize=(8, 5.5))
+                # Dùng một màu xanh dương đồng nhất cho tính chuyên nghiệp thay vì màu cầu vồng
+                sns.barplot(x=ward_counts.values, y=ward_counts.index, color="#3465A4", ax=ax2)
+                ax2.set_xlabel("Số lượng mẫu (n)", fontweight="bold")
+                ax2.set_ylabel("Khoa phòng", fontweight="bold")
+                # Thêm nhãn số lượng ở cuối mỗi cột
+                for i, v in enumerate(ward_counts.values):
+                    ax2.text(v + (ward_counts.max() * 0.02), i, str(v), color='black', va='center', fontsize=10)
+                sns.despine(ax=ax2)
+                plt.tight_layout()
+                st.pyplot(fig2)
+                plt.close(fig2)
+            else: st.info("Không đủ dữ liệu Khoa phòng.")
+
+            # 4. BIỂU ĐỒ THEO GIỚI TÍNH (Donut Chart chuẩn nghiên cứu khoa học)
+            st.markdown("<br>**4. Phân bố mẫu theo Giới tính**", unsafe_allow_html=True)
+            if "SEX" in demo_df.columns:
+                sex_map = {"M": "Nam", "F": "Nữ", "U": "Chưa rõ", "NAM": "Nam", "NỮ": "Nữ"}
+                demo_df["SEX_Name"] = demo_df["SEX"].map(lambda x: sex_map.get(str(x).upper().strip(), str(x).title()))
+                sex_counts = demo_df["SEX_Name"].value_counts()
+                
+                if not sex_counts.empty:
+                    fig4, ax4 = plt.subplots(figsize=(8, 4.5))
+                    
+                    # Cấu hình màu sắc nhã nhặn, chuẩn học thuật (Muted/Pastel)
+                    colors = ["#4A90E2", "#E26D5C", "#95A5A6"]
+                    
+                    # Vẽ biểu đồ Donut (độ rộng vòng khuyên width=0.35) để tạo khoảng trống sạch sẽ
+                    wedges, texts, autotexts = ax4.pie(
+                        sex_counts.values, 
+                        labels=sex_counts.index, 
+                        autopct='%1.1f%%', 
+                        colors=colors[:len(sex_counts)], 
+                        startangle=140, 
+                        wedgeprops=dict(width=0.35, edgecolor='w', linewidth=2), # Tạo viền trắng tách biệt các phần
+                        pctdistance=0.75, # Đẩy chữ phần trăm ra xa tâm để tránh trùng lặp
+                    )
+                    
+                    # Định dạng font chữ tinh tế, không bị thô
+                    for text in texts:
+                        text.set_color('#2C3E50')
+                        text.set_fontsize(11)
+                    for autotext in autotexts:
+                        autotext.set_color('black')
+                        autotext.set_fontsize(10)
+                        autotext.set_weight('bold')
+                        
+                    ax4.axis('equal') 
+                    plt.tight_layout()
+                    st.pyplot(fig4)
+                    plt.close(fig4)
+                else: st.info("Dữ liệu giới tính trống.")
+            else: st.info("Dữ liệu không có cột 'SEX'.")
+            
+        # Trả lại định dạng đồ họa mặc định để không làm ảnh hưởng các biểu đồ khác bên dưới
+        sns.reset_defaults()
         st.header("📈 Xu hướng nhạy cảm qua các năm")
         pivot_trend = pivot.copy()
         pivot_trend["YEAR"] = pivot_trend["SPEC_DATE"].dt.year
@@ -518,9 +776,17 @@ if excluded_rules:
                     icon = "🔴"
                 status += f" [{', '.join(phenotypes)}]"
 
+            # --- ĐOẠN MÃ HÓA BẢO MẬT PID ---
+            raw_pid = str(row["PID"]).strip()
+            # Giữ 2 ký tự đầu, 2 ký tự cuối, ở giữa thay bằng dấu *
+            if len(raw_pid) > 4:
+                masked_pid = f"{raw_pid[:2]}****{raw_pid[-2:]}"
+            else:
+                masked_pid = "BN-****"
+
             if groups_resistant >= 1 or "Thường" not in status:
                 advanced_mdr_rows.append({
-                    "Mã BN": row["PID"], "Vi khuẩn": org_name, 
+                    "Mã BN": masked_pid, "Vi khuẩn": org_name, 
                     "Khoa phòng": f"{row['WARD']} — {ward_to_dept.get(row['WARD'], '')}", 
                     "Bệnh phẩm": spec_translation.get(row['SPEC_TYPE'].lower(), row['SPEC_TYPE']), 
                     "Ngày cấy": row["SPEC_DATE"].strftime('%Y-%m-%d') if pd.notna(row["SPEC_DATE"]) else "N/A", 
